@@ -13,13 +13,21 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Нужен доступ к геолокации для построения маршрута и поиска рядом.",
+        "NSCameraUsageDescription": "Нужна камера для фотографирования документов.",
+        "NSPhotoLibraryAddUsageDescription": "Нужно сохранить фото документов в библиотеку."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION", "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"],
       "edgeToEdgeEnabled": true
     },
     "web": {
