@@ -254,7 +254,8 @@ export default function DriverHomeScreen() {
     if (!myLocation) return;
     try {
       setLoading(true);
-      const res = await driverAcceptOrder(order.id);
+      console.log(JSON.stringify(myLocation));
+      const res = await driverAcceptOrder(order.id, myLocation);
       setCurrentOrder(res);
       setPhase(DRIVER_PHASE.ACCEPTED);
       setAvailableOrders([]);
@@ -313,6 +314,10 @@ export default function DriverHomeScreen() {
       stopTimer();
     };
   }, []);
+
+  useEffect(() => {
+    console.log('order', currentOrder);
+    });
 
   const formatWorkedTime = (sec) => {
     const m = Math.floor(sec / 60)
@@ -377,12 +382,13 @@ export default function DriverHomeScreen() {
                     : 'Выйдите на линию, чтобы получать заказы'}
                 </Text>
               </View>
-              <Pressable
+              {phase === DRIVER_PHASE.IDLE && <Pressable
                 style={[
                   styles.onlineToggle,
                   online && styles.onlineToggleOn,
                   !canGoOnline && styles.onlineToggleDisabled,
                 ]}
+                disabled={phase === DRIVER_PHASE.IDLE}
                 onPress={toggleOnline}
               >
                 <View
@@ -391,7 +397,7 @@ export default function DriverHomeScreen() {
                     online && styles.onlineKnobOn,
                   ]}
                 />
-              </Pressable>
+              </Pressable>}
             </View>
 
             {/* напоминание заполнить технику */}

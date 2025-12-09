@@ -28,9 +28,10 @@ export async function fetchDriverActiveOrders() {
   return data;
 }
 
-export async function driverAcceptOrder(orderId) {
+export async function driverAcceptOrder(orderId, destination) {
   const data = await request(`/orders/driver/${orderId}/accept`, {
     method: 'POST',
+    body: { ...destination },
   });
   return data;
 }
@@ -58,4 +59,17 @@ export async function fetchDriverEarnings(fromIso, toIso) {
     { method: 'GET' },
   );
   return data;
+}
+
+export async function fetchLastCompletedUnratedOrder() {
+  try {
+    const data = await request('/orders/customer/last-completed-unrated', {
+      method: 'GET',
+    });
+    return data; // OrderResponse или 404/empty
+  } catch (e) {
+    // если 404 — просто вернём null
+    console.log('fetchLastCompletedUnratedOrder error', e);
+    return null;
+  }
 }

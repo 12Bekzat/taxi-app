@@ -21,14 +21,16 @@ import { reverseGeocode, routeDriving } from '../utils/routing';
 import { clusterPoints } from '../utils/cluster';
 
 // 🔗 методы работы с заказами (через fetch)
-import { createOrder, fetchMyActiveOrders } from '../api/orders';
+import {
+  createOrder,
+  fetchMyActiveOrders,
+  fetchLastCompletedUnratedOrder,
+} from '../api/orders';
 import { rateOrder } from '../api/rating';
-// 🔗 метод оценки водителя
 
 const ALMATY = { latitude: 43.238949, longitude: 76.889709 };
 
 // Локальные типы техники (для UI).
-// Для бэка добавлен mapping на id типов в БД.
 const VEHICLES = [
   { id: 'tow_truck', title: 'Эвакуатор', price: 8000, backendId: 1 },
   { id: 'crane', title: 'Манипулятор', price: 9500, backendId: 2 },
@@ -36,11 +38,11 @@ const VEHICLES = [
 ];
 
 const ORDER_STATE = {
-  IDLE: 'idle',          // ничего не заказано
-  SEARCHING: 'searching',// заказ создан, идёт поиск
-  ASSIGNED: 'assigned',  // водитель принял
-  IN_PROGRESS: 'in_progress', // водитель работает
-  COMPLETED: 'completed',// работа завершена, клиент должен оценить и "оплатить"
+  IDLE: 'idle',
+  SEARCHING: 'searching',
+  ASSIGNED: 'assigned',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
 };
 
 const SEARCH_DURATION_SEC = 3 * 60; // 3 минуты как на скрине
@@ -72,7 +74,13 @@ export default function CustomerHomeScreeen() {
   const [searchRemaining, setSearchRemaining] = useState(SEARCH_DURATION_SEC);
   const [currentOrder, setCurrentOrder] = useState(null);
 
-  // статичный «назначенный» водитель (fallback, если в заказе нет driverName)
+  // ===== РЕЙТИНГ ВОДИТЕЛЯ =====
+  const [ratingVisible, setRatingVisible] = useState(false);
+  const [ratingOrder, setRatingOrder] = useState(null);
+  const [ratingValue, setRatingValue] = useState(5);
+  const [ratingComment, setRatingComment] = useState('');
+
+  // статичный «назначенный» водитель (fallback)
   const assignedDriverFallback = {
     name: 'Айдар',
     vehicleTitle: 'Эвакуатор MAN',
@@ -81,12 +89,6 @@ export default function CustomerHomeScreeen() {
     phone: '+7 701 123 45 67',
     etaMin: 7,
   };
-
-  // === ОЦЕНКА ВОДИТЕЛЯ ===
-  const [showRating, setShowRating] = useState(false);
-  const [ratingScore, setRatingScore] = useState(0);
-  const [ratingComment, setRatingComment] = useState('');
-  const [submittingRating, setSubmittingRating] = useState(false);
 
   const vehicleObj = useMemo(
     () => VEHICLES.find((v) => v.id === activeVehicle) || VEHICLES[0],
@@ -118,7 +120,7 @@ export default function CustomerHomeScreeen() {
     }
     const perMin =
       order.pricePerMinute ||
-      Math.round((vehicleObj.price || 0) / 30); // fallback
+      Math.round((vehicleObj.price || 0) / 30); // грубый fallback
     const minutes = order.estimatedMinutes || 30;
     setPrice(perMin * minutes);
   };
@@ -155,16 +157,16 @@ export default function CustomerHomeScreeen() {
     setDriverClusters(clusterPoints(list, 0.01));
   }, [region.latitude, region.longitude]);
 
-  // ===== подтянуть активный заказ при открытии экрана =====
+  // ===== подтянуть активный заказ + незавершённый рейтинг при старте =====
   useEffect(() => {
     (async () => {
       try {
+        // 1) активный заказ
         const active = await fetchMyActiveOrders();
         if (active && active.length > 0) {
           const o = active[0];
           setCurrentOrder(o);
-          const st = mapStatusToOrderState(o.status);
-          setOrderState(st);
+          setOrderState(mapStatusToOrderState(o.status));
           recalcPriceFromOrder(o);
 
           if (o.originLat && o.originLon) {
@@ -173,14 +175,20 @@ export default function CustomerHomeScreeen() {
             setAddressText(o.originAddress || '');
             updateRoute(coord, /*silent*/ true);
           }
+        } else {
+          setOrderState(ORDER_STATE.IDLE);
+        }
 
-          if (st === ORDER_STATE.COMPLETED) {
-            // если с бэка сразу пришёл COMPLETED — сразу просим оценку
-            setShowRating(true);
-          }
+        // 2) последний завершённый, но НЕ оценённый заказ
+        const lastUnrated = await fetchLastCompletedUnratedOrder();
+        if (lastUnrated && lastUnrated.id) {
+          setRatingOrder(lastUnrated);
+          setRatingValue(0);
+          setRatingComment('');
+          setRatingVisible(true);
         }
       } catch (e) {
-        console.log('fetchMyActiveOrders error', e);
+        console.log('init customer home error', e);
       }
     })();
   }, []);
@@ -193,19 +201,15 @@ export default function CustomerHomeScreeen() {
       try {
         const active = await fetchMyActiveOrders();
         if (!active || active.length === 0) {
-          // активных заказов нет: могли завершить на бэке
-          // здесь можно по желанию дополнительно запрашивать последний заказ
+          setCurrentOrder(null);
+          setOrderState(ORDER_STATE.IDLE);
+          setSearchRemaining(SEARCH_DURATION_SEC);
           return;
         }
         const o = active[0];
         setCurrentOrder(o);
-        const st = mapStatusToOrderState(o.status);
-        setOrderState(st);
+        setOrderState(mapStatusToOrderState(o.status));
         recalcPriceFromOrder(o);
-
-        if (st === ORDER_STATE.COMPLETED) {
-          setShowRating(true);
-        }
       } catch (e) {
         console.log('poll active order error', e);
       }
@@ -214,7 +218,7 @@ export default function CustomerHomeScreeen() {
     return () => clearInterval(id);
   }, [currentOrder?.id]);
 
-  // ===== таймер поиска машины (визуалка) =====
+  // ===== таймер поиска машины (чисто фронтовый) =====
   useEffect(() => {
     if (orderState !== ORDER_STATE.SEARCHING) return;
 
@@ -255,7 +259,6 @@ export default function CustomerHomeScreeen() {
     }
   };
 
-  // выбор из подсказки
   const handlePickAddress = (item) => {
     const coord = { latitude: item.lat, longitude: item.lon };
     setAddressText(item.label);
@@ -264,7 +267,6 @@ export default function CustomerHomeScreeen() {
     updateRoute(coord);
   };
 
-  // долгий тап по карте
   const handleLongPress = async (c) => {
     setAddressCoord(c);
     const addr = await reverseGeocode(c.latitude, c.longitude);
@@ -309,8 +311,7 @@ export default function CustomerHomeScreeen() {
 
       const order = await createOrder(payload);
       setCurrentOrder(order);
-      const st = mapStatusToOrderState(order.status);
-      setOrderState(st);
+      setOrderState(mapStatusToOrderState(order.status));
       recalcPriceFromOrder(order);
       setPanelExpanded(false);
     } catch (e) {
@@ -327,48 +328,55 @@ export default function CustomerHomeScreeen() {
     setCurrentOrder(null);
   };
 
-  // "оплата" — муляж
+  // оплата → сразу открываем модалку рейтинга
   const handlePayment = () => {
     if (!currentOrder) return;
+
     console.log(
-      `FAKE PAYMENT: order=${currentOrder.id}, amount=${
-        currentOrder.totalPrice || price
-      } ₸`,
+      `FAKE PAYMENT: order=${currentOrder.id}, amount=${currentOrder.totalPrice || price} ₸`,
     );
-    setCurrentOrder(null);
-    setOrderState(ORDER_STATE.IDLE);
-    setSearchRemaining(SEARCH_DURATION_SEC);
-    setRoute(null);
-    setAddressCoord(null);
-    setAddressText('');
+
+    // вместо того чтобы сразу чистить заказ — сначала даём ОЦЕНИТЬ
+    setRatingOrder(currentOrder);
+    setRatingValue(5);
+    setRatingComment('');
+    setRatingVisible(true);
   };
 
-  // === отправка оценки ===
-  const submitRating = async () => {
-    if (ratingScore < 1 || ratingScore > 5) {
+  useEffect(() => {
+  console.log('order', currentOrder);
+  });
+
+  // отправка оценки на бэк
+  const handleSubmitRating = async () => {
+    if (!ratingOrder || !ratingValue) {
       Alert.alert('Оценка', 'Поставьте оценку от 1 до 5 звёзд.');
       return;
     }
 
     try {
-      setSubmittingRating(true);
-      if (currentOrder?.id) {
-        await rateOrder(currentOrder.id, ratingScore, ratingComment.trim());
-      } else {
-        console.log('Нет currentOrder.id — отправляем только локально');
-      }
+      setLoading(true);
+      await rateOrder(
+        ratingOrder.id,
+        ratingValue,
+        ratingComment.trim() || null,
+      );
 
-      setShowRating(false);
-      setRatingScore(0);
+      // после успешной оценки очищаем локальное состояние заказа
+      setRatingVisible(false);
+      setRatingOrder(null);
       setRatingComment('');
+      setRatingValue(5);
 
-      // после оценки — "оплата"
-      handlePayment();
+      // сброс состояния заказа
+      setCurrentOrder(null);
+      setOrderState(ORDER_STATE.IDLE);
+      setSearchRemaining(SEARCH_DURATION_SEC);
     } catch (e) {
-      console.log('submitRating error', e);
-      Alert.alert('Ошибка', 'Не удалось сохранить оценку. Попробуйте ещё раз.');
+      console.log('submitDriverRating error', e);
+      Alert.alert('Ошибка', 'Не удалось отправить оценку. Попробуйте ещё раз.');
     } finally {
-      setSubmittingRating(false);
+      setLoading(false);
     }
   };
 
@@ -391,19 +399,32 @@ export default function CustomerHomeScreeen() {
     return `${m}:${s}`;
   };
 
-  const searchProgress =
-    1 - searchRemaining / SEARCH_DURATION_SEC; // от 0 до 1
+  const searchProgress = 1 - searchRemaining / SEARCH_DURATION_SEC;
 
-  const driverName = currentOrder?.driverName || assignedDriverFallback.name;
+  const driverName =
+    currentOrder?.driverName ||
+    ratingOrder?.driverName ||
+    assignedDriverFallback.name;
   const driverVehicle =
-    currentOrder?.equipmentName || assignedDriverFallback.vehicleTitle;
-  const driverPhone = currentOrder?.driverPhone || assignedDriverFallback.phone;
+    currentOrder?.equipmentName ||
+    ratingOrder?.equipmentName ||
+    assignedDriverFallback.vehicleTitle;
+  const driverPhone =
+    currentOrder?.driverPhone ||
+    ratingOrder?.driverPhone ||
+    assignedDriverFallback.phone;
+
+  const ratingDriverName = ratingOrder?.driverName || driverName;
+  const ratingEquipmentName =
+    ratingOrder?.equipmentName || driverVehicle || 'Спецтехника';
 
   return (
     <View style={{ flex: 1 }}>
       <OSMMap
         initialRegion={region}
-        fromMarker={myLocation}
+        fromMarker={currentOrder?.destinationLat && currentOrder?.destinationLon
+            ? { latitude: currentOrder.destinationLat, longitude: currentOrder.destinationLon }
+            : null}
         toMarker={addressCoord}
         routePoints={route?.points}
         onLongPress={handleLongPress}
@@ -427,7 +448,6 @@ export default function CustomerHomeScreeen() {
         {/* нижняя панель */}
         <View style={[styles.panelWrap, panelPositionStyle]}>
           <FloatingCard style={[styles.panelCard, panelCardStyle]}>
-            {/* handle */}
             <View style={styles.handleRow}>
               <View style={styles.handleBar} />
             </View>
@@ -436,7 +456,6 @@ export default function CustomerHomeScreeen() {
             {orderState === ORDER_STATE.IDLE && (
               <>
                 {panelExpanded ? (
-                  // развернутый режим: ввод адреса
                   <>
                     <View style={styles.expandedHeader}>
                       <Text style={styles.h1}>Куда подать спецтехнику?</Text>
@@ -506,7 +525,6 @@ export default function CustomerHomeScreeen() {
                     />
                   </>
                 ) : (
-                  // компактный режим
                   <>
                     <Pressable
                       style={styles.compactAddressRow}
@@ -571,7 +589,6 @@ export default function CustomerHomeScreeen() {
             )}
 
             {orderState === ORDER_STATE.SEARCHING && (
-              // экран "Поиск машины"
               <View style={{ flex: 1 }}>
                 <View style={styles.searchHeaderRow}>
                   <Text style={styles.h1}>Поиск спецтехники</Text>
@@ -583,7 +600,6 @@ export default function CustomerHomeScreeen() {
                   Ещё чуть-чуть… ищем ближайшего свободного эвакуатора.
                 </Text>
 
-                {/* жёлтая полоска прогресса */}
                 <View style={styles.progressBarBg}>
                   <View
                     style={[
@@ -619,7 +635,6 @@ export default function CustomerHomeScreeen() {
             )}
 
             {orderState === ORDER_STATE.ASSIGNED && (
-              // машина назначена, ещё не начала работать
               <View style={{ flex: 1 }}>
                 <View style={styles.searchHeaderRow}>
                   <Text style={styles.h1}>Спецтехника назначена</Text>
@@ -669,7 +684,6 @@ export default function CustomerHomeScreeen() {
             )}
 
             {orderState === ORDER_STATE.IN_PROGRESS && (
-              // водитель выполняет работу на месте
               <View style={{ flex: 1 }}>
                 <View style={styles.searchHeaderRow}>
                   <Text style={styles.h1}>Работа выполняется</Text>
@@ -708,15 +722,13 @@ export default function CustomerHomeScreeen() {
             )}
 
             {orderState === ORDER_STATE.COMPLETED && (
-              // работа закончена, нужно оценить и "оплатить"
               <View style={{ flex: 1 }}>
                 <View style={styles.searchHeaderRow}>
                   <Text style={styles.h1}>Работа завершена</Text>
                 </View>
                 <Text style={styles.caption}>
                   Водитель завершил заказ. Итоговая стоимость рассчитана по
-                  фактическому времени работы. Оцените поездку, чтобы перейти к
-                  оплате.
+                  фактическому времени работы.
                 </Text>
 
                 <DriverInfo
@@ -730,10 +742,8 @@ export default function CustomerHomeScreeen() {
 
                 <View style={{ marginTop: 16 }}>
                   <Button
-                    title={`Оценить и оплатить ~${
-                      currentOrder?.totalPrice || price
-                    } ₸`}
-                    onPress={() => setShowRating(true)}
+                    title={`Оплатить ~${currentOrder?.totalPrice || price} ₸`}
+                    onPress={handlePayment}
                   />
                 </View>
               </View>
@@ -748,47 +758,53 @@ export default function CustomerHomeScreeen() {
         </View>
       )}
 
-      {/* Модалка оценки — обязательная */}
+      {/* ===== МОДАЛКА ОЦЕНКИ ВОДИТЕЛЯ ===== */}
       <Modal
-        visible={showRating}
+        visible={ratingVisible}
         transparent
         animationType="slide"
         onRequestClose={() => {
-          // не даём закрыть без оценки
+          // НЕ даём закрыть без оценки, поэтому просто игнорируем
         }}
       >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Оцените работу спецтехники</Text>
-            <Text style={styles.modalSubtitle}>
-              Поставьте оценку от 1 до 5 звёзд. Комментарий — по желанию.
+        <View style={styles.ratingOverlay}>
+          <View style={styles.ratingCard}>
+            <Text style={styles.ratingTitle}>Оцените поездку</Text>
+            <Text style={styles.ratingSubtitle}>
+              {ratingDriverName
+                ? `Водитель: ${ratingDriverName}`
+                : 'Ваш водитель'}
+            </Text>
+            <Text style={styles.ratingSubtitle}>
+              {ratingEquipmentName}
             </Text>
 
-            <StarRatingRow
-              value={ratingScore}
-              onChange={setRatingScore}
-            />
+            <View style={styles.starsRow}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <Pressable
+                  key={star}
+                  onPress={() => setRatingValue(star)}
+                  style={styles.starBtn}
+                >
+                  <Ionicons
+                    name={star <= ratingValue ? 'star' : 'star-outline'}
+                    size={28}
+                    color="#FACC15"
+                  />
+                </Pressable>
+              ))}
+            </View>
 
             <TextInput
-              style={styles.commentInput}
-              placeholder="Комментарий (необязательно)"
+              style={styles.ratingInput}
+              placeholder="Оставьте комментарий (по желанию)"
               placeholderTextColor="#9CA3AF"
-              multiline
               value={ratingComment}
               onChangeText={setRatingComment}
+              multiline
             />
 
-            <Button
-              title={
-                submittingRating
-                  ? 'Отправка...'
-                  : ratingScore === 0
-                  ? 'Поставьте оценку'
-                  : 'Отправить и оплатить'
-              }
-              disabled={ratingScore === 0 || submittingRating}
-              onPress={submitRating}
-            />
+            <Button title="Отправить оценку" onPress={handleSubmitRating} />
           </View>
         </View>
       </Modal>
@@ -800,9 +816,7 @@ function DriverInfo({ name, vehicleTitle, plate, color, price, address }) {
   return (
     <View style={styles.driverCard}>
       <View style={styles.driverAvatar}>
-        <Text style={styles.driverAvatarText}>
-          {name ? name[0] : '?'}
-        </Text>
+        <Text style={styles.driverAvatarText}>{name ? name[0] : '?'}</Text>
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.driverName}>
@@ -836,31 +850,6 @@ function VehicleCard({ data, active, onPress }) {
       </Text>
       <Text style={styles.vehiclePrice}>от {data.price} ₸ / 30 мин</Text>
     </Pressable>
-  );
-}
-
-function StarRatingRow({ value, onChange }) {
-  const stars = [1, 2, 3, 4, 5];
-  return (
-    <View style={styles.starsRow}>
-      {stars.map((s) => {
-        const active = value >= s;
-        return (
-          <Pressable
-            key={s}
-            onPress={() => onChange(s)}
-            style={styles.starBtn}
-            hitSlop={8}
-          >
-            <Ionicons
-              name={active ? 'star' : 'star-outline'}
-              size={26}
-              color={active ? '#F59E0B' : '#D1D5DB'}
-            />
-          </Pressable>
-        );
-      })}
-    </View>
   );
 }
 
@@ -1054,50 +1043,47 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // рейтинг
-  starsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginVertical: 12,
-  },
-  starBtn: {
-    marginHorizontal: 4,
-  },
-
-  modalBackdrop: {
+  // ===== РЕЙТИНГ =====
+  ratingOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',
     justifyContent: 'flex-end',
   },
-  modalCard: {
+  ratingCard: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 14,
+    padding: 16,
     paddingBottom: 24,
   },
-  modalTitle: {
-    fontSize: 16,
+  ratingTitle: {
+    fontSize: 18,
     fontWeight: '800',
     color: '#111827',
   },
-  modalSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
+  ratingSubtitle: {
+    fontSize: 13,
+    color: '#4B5563',
     marginTop: 4,
   },
-  commentInput: {
+  starsRow: {
+    flexDirection: 'row',
     marginTop: 12,
-    borderRadius: 12,
+    marginBottom: 8,
+  },
+  starBtn: {
+    marginRight: 6,
+  },
+  ratingInput: {
+    marginTop: 8,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 8,
     minHeight: 70,
     textAlignVertical: 'top',
     fontSize: 13,
     color: '#111827',
-    backgroundColor: '#F9FAFB',
   },
 });

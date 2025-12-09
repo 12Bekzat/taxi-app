@@ -5,7 +5,7 @@ import { request } from './client'; // тот же helper, что ты уже и
 export async function rateOrder(orderId, score, comment) {
   return request(`/ratings/orders/${orderId}`, {
     method: 'POST',
-    body: JSON.stringify({ score, comment }),
+    body: { score, comment },
   });
 }
 

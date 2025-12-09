@@ -67,6 +67,8 @@ export async function request(path, options = {}) {
   }
 
   if (!resp.ok) {
+    console.log(JSON.stringify(resp));
+    
     const err = new Error(
       (data && data.message) || `API error: ${resp.status}`,
     );
