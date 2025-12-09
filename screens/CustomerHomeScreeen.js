@@ -433,7 +433,7 @@ export default function CustomerHomeScreeen() {
         {/* верх: бренд */}
         <View style={styles.topArea}>
           <Text style={styles.brand}>
-            <Text style={{ color: '#E30613' }}>RED</Text>Taxi
+            <Text style={{ color: '#E30613' }}>LIFT</Text>Me
           </Text>
           {permError && (
             <FloatingCard style={{ marginTop: 8 }}>

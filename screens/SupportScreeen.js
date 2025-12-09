@@ -126,7 +126,7 @@ export default function SupportScreen() {
           <Pressable
             style={styles.contactRow}
             onPress={() => {
-              console.log('email support support@redtaxi.kz');
+              console.log('email support support@liftme.kz');
             }}
           >
             <View style={styles.iconCircle}>
@@ -134,7 +134,7 @@ export default function SupportScreen() {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.contactTitle}>Написать на e-mail</Text>
-              <Text style={styles.contactSubtitle}>support@redtaxi.kz</Text>
+              <Text style={styles.contactSubtitle}>support@liftme.kz</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#D1D5DB" />
           </Pressable>

@@ -34,7 +34,7 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.brand}>
-        <Text style={{ color: "#E30613" }}>RED</Text>Taxi
+        <Text style={{ color: "#E30613" }}>Lift</Text>Me
       </Text>
       <Text style={styles.title}>Вход по номеру телефона</Text>
 

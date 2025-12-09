@@ -88,7 +88,7 @@ export default function ProfileScreen() {
     {
       key: 'work',
       icon: 'car-outline',
-      title: 'Работа в REDTaxi',
+      title: 'Работа в LiftMe',
       subtitle: 'Статус на линии и смены',
       onPress: () => navigation.navigate('DriverWork'),
     },

@@ -352,7 +352,7 @@ export default function DriverHomeScreen() {
       >
         <View style={styles.topArea}>
           <Text style={styles.brand}>
-            <Text style={{ color: '#E30613' }}>RED</Text>Taxi • Driver
+            <Text style={{ color: '#E30613' }}>LIFT</Text>Me • Driver
           </Text>
           {permError && (
             <FloatingCard style={{ marginTop: 8 }}>
