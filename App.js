@@ -28,6 +28,7 @@ import DriverVehicleScreen from "./screens/DriverVehicleScreen";
 import SupportScreen from "./screens/SupportScreeen";
 import DriverPayoutsScreen from "./screens/DriverPayoutsScreen";
 import DriverRatingScreen from "./screens/DriverRatingScreen";
+import ChatScreen from "./screens/ChatScreen";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -114,6 +115,7 @@ function MainStack() {
         component={DriverRatingScreen}
         options={{ headerShown: false }}
       />
+      <Stack.Screen name="Chat" component={ChatScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
       <Stack.Screen name="Messages" component={MessagesScreen} />
       <Stack.Screen name="Vehicle" component={VehicleScreen} />

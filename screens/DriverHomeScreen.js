@@ -1,43 +1,46 @@
 // screens/DriverHomeScreen.js
-import React, { use, useEffect, useMemo, useRef, useState } from 'react';
+import React, { use, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
   ActivityIndicator,
-} from 'react-native';
-import * as Location from 'expo-location';
-import { Ionicons } from '@expo/vector-icons';
+} from "react-native";
+import * as Location from "expo-location";
+import { Ionicons } from "@expo/vector-icons";
 
-import OSMMap from '../components/OSMMap';
-import FloatingCard from '../components/FloatingCard';
-import Button from '../components/Button';
-import { clusterPoints } from '../utils/cluster';
-import { routeDriving } from '../utils/routing';
+import OSMMap from "../components/OSMMap";
+import FloatingCard from "../components/FloatingCard";
+import Button from "../components/Button";
+import { clusterPoints } from "../utils/cluster";
+import { routeDriving } from "../utils/routing";
 import {
   fetchDriverAvailableOrders,
   fetchDriverActiveOrders,
   driverAcceptOrder,
   driverStartOrder,
   driverFinishOrder,
-} from '../api/orders';
-import { useAuth } from '../context/AuthContext';
-import { fetchDriverVehicle } from '../api/driverVehicle';
+} from "../api/orders";
+import { useAuth } from "../context/AuthContext";
+import { fetchDriverVehicle } from "../api/driverVehicle";
+import { useNavigation } from "@react-navigation/native";
 
 const ALMATY = { latitude: 43.238949, longitude: 76.889709 };
 
 const DRIVER_PHASE = {
-  OFFLINE: 'offline',
-  IDLE: 'idle', // онлайн, но без заказа
-  ACCEPTED: 'accepted', // едет к клиенту
-  ARRIVED: 'arrived', // на месте, но ещё не начал
-  IN_PROGRESS: 'in_progress',
-  COMPLETED: 'completed',
+  OFFLINE: "offline",
+  IDLE: "idle", // онлайн, но без заказа
+  ACCEPTED: "accepted", // едет к клиенту
+  ARRIVED: "arrived", // на месте, но ещё не начал
+  IN_PROGRESS: "in_progress",
+  COMPLETED: "completed",
 };
 
 export default function DriverHomeScreen() {
   const { user, navigation } = useAuth() || {}; // navigation можешь пробросить иначе
+
+  const nav = useNavigation()
 
   const [region, setRegion] = useState({
     latitude: ALMATY.latitude,
@@ -66,46 +69,43 @@ export default function DriverHomeScreen() {
   // ===== информация о технике из профиля =====
   const driverVehicle = useMemo(async () => {
     const p = await fetchDriverVehicle();
-    console.log('vehicle', p);
-    console.log('user', user);
-    
-    
+
     return {
       equipmentTypeId: p.equipmentTypeId ?? p.equipment_type_id ?? null,
-      equipmentName: p.equipmentName || p.typeName || 'Моя техника',
-      model: p.model || '',
-      plate: p.plateNumber || p.plate || '',
-      color: p.color || '',
+      equipmentName: p.equipmentName || p.typeName || "Моя техника",
+      model: p.model || "",
+      plate: p.plateNumber || p.plate || "",
+      color: p.color || "",
     };
   }, [user]);
 
-  
   const hasVehicle = useMemo(() => !!driverVehicle, [user, driverVehicle]);
 
-  useEffect(() => {
-  console.log('has v', hasVehicle);
-  }, [user, driverVehicle]);
-  
   const hasDocs = useMemo(() => !!user?.driverDocsCompleted, [user]);
   // можно выходить на линию только когда заполнена и техника, и документы
   const canGoOnline = useMemo(async () => {
     return hasVehicle && hasDocs;
   }, [hasVehicle, hasDocs]);
-;
-
   // ===== геолокация водителя =====
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
+      if (status !== "granted") {
         setPermError(true);
         return;
       }
       setPermError(false);
       const loc = await Location.getCurrentPositionAsync({});
-      const c = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      const c = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      };
       setMyLocation(c);
-      setRegion((r) => ({ ...r, latitude: c.latitude, longitude: c.longitude }));
+      setRegion((r) => ({
+        ...r,
+        latitude: c.latitude,
+        longitude: c.longitude,
+      }));
     })();
   }, []);
 
@@ -145,7 +145,7 @@ export default function DriverHomeScreen() {
           setPhase(DRIVER_PHASE.OFFLINE);
         }
       } catch (e) {
-        console.log('init driver orders error', e);
+        console.log("init driver orders error", e);
       }
     })();
   }, [myLocation]);
@@ -164,12 +164,12 @@ export default function DriverHomeScreen() {
         // фильтруем по типу техники, если известен
         if (driverVehicle.equipmentTypeId) {
           res = res.filter(
-            (o) => o.equipmentTypeId === driverVehicle.equipmentTypeId,
+            (o) => o.equipmentTypeId === driverVehicle.equipmentTypeId
           );
         }
         if (!stopped) setAvailableOrders(res);
       } catch (e) {
-        console.log('fetchDriverAvailableOrders error', e);
+        console.log("fetchDriverAvailableOrders error", e);
       }
     };
 
@@ -186,13 +186,13 @@ export default function DriverHomeScreen() {
 
   const mapStatusToPhase = (status) => {
     switch (status) {
-      case 'NEW':
+      case "NEW":
         return DRIVER_PHASE.IDLE;
-      case 'ACCEPTED':
+      case "ACCEPTED":
         return DRIVER_PHASE.ACCEPTED;
-      case 'IN_PROGRESS':
+      case "IN_PROGRESS":
         return DRIVER_PHASE.IN_PROGRESS;
-      case 'COMPLETED':
+      case "COMPLETED":
         return DRIVER_PHASE.COMPLETED;
       default:
         return DRIVER_PHASE.IDLE;
@@ -220,7 +220,7 @@ export default function DriverHomeScreen() {
       const r = await routeDriving(from, to);
       setRouteToClient(r);
     } catch (e) {
-      console.log('routeDriving driver error', e);
+      console.log("routeDriving driver error", e);
     } finally {
       setLoading(false);
     }
@@ -229,10 +229,10 @@ export default function DriverHomeScreen() {
   const toggleOnline = () => {
     if (!canGoOnline) {
       if (!hasVehicle) {
-        console.log('Нельзя выйти на линию без заполненной техники');
+        console.log("Нельзя выйти на линию без заполненной техники");
         // navigation?.navigate?.('DriverVehicle');
       } else if (!hasDocs) {
-        console.log('Нельзя выйти на линию без загруженных документов');
+        console.log("Нельзя выйти на линию без загруженных документов");
         // navigation?.navigate?.('DriverDocuments');
       }
       return;
@@ -265,7 +265,7 @@ export default function DriverHomeScreen() {
         buildRouteToClient(myLocation, dest);
       }
     } catch (e) {
-      console.log('driverAcceptOrder error', e);
+      console.log("driverAcceptOrder error", e);
     } finally {
       setLoading(false);
     }
@@ -285,7 +285,7 @@ export default function DriverHomeScreen() {
       setPhase(DRIVER_PHASE.IN_PROGRESS);
       startTimer();
     } catch (e) {
-      console.log('driverStartOrder error', e);
+      console.log("driverStartOrder error", e);
     } finally {
       setLoading(false);
     }
@@ -299,11 +299,9 @@ export default function DriverHomeScreen() {
       setCurrentOrder(res);
       setPhase(DRIVER_PHASE.COMPLETED);
       stopTimer();
-      console.log(
-        `DRIVER EARNED: order=${res.id}, amount=${res.totalPrice} ₸`,
-      );
+      console.log(`DRIVER EARNED: order=${res.id}, amount=${res.totalPrice} ₸`);
     } catch (e) {
-      console.log('driverFinishOrder error', e);
+      console.log("driverFinishOrder error", e);
     } finally {
       setLoading(false);
     }
@@ -315,22 +313,34 @@ export default function DriverHomeScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    console.log('order', currentOrder);
-    });
+  const formatWorkedTime = () => {
+    console.log("order", currentOrder?.startedAt);
 
-  const formatWorkedTime = (sec) => {
-    const m = Math.floor(sec / 60)
-      .toString()
-      .padStart(2, '0');
-    const s = (sec % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
+    const from = new Date(currentOrder?.startedAt);
+    const to = new Date();
+
+    const diffMs = Math.max(0, to.getTime() - from.getTime()); // защита от отрицательных значений
+    const totalSeconds = Math.floor(diffMs / 1000);
+
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    const mm = String(minutes).padStart(2, "0");
+    const ss = String(seconds).padStart(2, "0");
+
+    return `${mm}:${ss}`;
+
+    // const m = Math.floor(sec / 60)
+    //   .toString()
+    //   .padStart(2, "0");
+    // const s = (sec % 60).toString().padStart(2, "0");
+    // return `${m}:${s}`;
   };
 
   const currentAddress =
     currentOrder?.originAddress?.length > 60
-      ? currentOrder.originAddress.slice(0, 57) + '…'
-      : currentOrder?.originAddress || 'Адрес не задан';
+      ? currentOrder.originAddress.slice(0, 57) + "…"
+      : currentOrder?.originAddress || "Адрес не задан";
 
   const estimatedIncome =
     currentOrder && currentOrder.pricePerMinute
@@ -344,7 +354,10 @@ export default function DriverHomeScreen() {
         fromMarker={myLocation}
         toMarker={
           currentOrder?.originLat && currentOrder?.originLon
-            ? { latitude: currentOrder.originLat, longitude: currentOrder.originLon }
+            ? {
+                latitude: currentOrder.originLat,
+                longitude: currentOrder.originLon,
+              }
             : null
         }
         routePoints={routeToClient?.points}
@@ -352,7 +365,7 @@ export default function DriverHomeScreen() {
       >
         <View style={styles.topArea}>
           <Text style={styles.brand}>
-            <Text style={{ color: '#E30613' }}>LIFT</Text>Me • Driver
+            <Text style={{ color: "#E30613" }}>LIFT</Text>Me • Driver
           </Text>
           {permError && (
             <FloatingCard style={{ marginTop: 8 }}>
@@ -370,34 +383,34 @@ export default function DriverHomeScreen() {
             <View style={styles.statusRow}>
               <View>
                 <Text style={styles.statusLabel}>
-                  {online ? 'Вы на линии' : 'Вы не на линии'}
+                  {online ? "Вы на линии" : "Вы не на линии"}
                 </Text>
                 <Text style={styles.statusSub}>
                   {!hasVehicle
-                    ? 'Заполните данные спецтехники, чтобы выйти на линию'
+                    ? "Заполните данные спецтехники, чтобы выйти на линию"
                     : !hasDocs
-                    ? 'Загрузите документы (права и удостоверение), чтобы выйти на линию'
+                    ? "Загрузите документы (права и удостоверение), чтобы выйти на линию"
                     : online
-                    ? 'Заказы подбираются по вашей технике'
-                    : 'Выйдите на линию, чтобы получать заказы'}
+                    ? "Заказы подбираются по вашей технике"
+                    : "Выйдите на линию, чтобы получать заказы"}
                 </Text>
               </View>
-              {phase === DRIVER_PHASE.IDLE && <Pressable
-                style={[
-                  styles.onlineToggle,
-                  online && styles.onlineToggleOn,
-                  !canGoOnline && styles.onlineToggleDisabled,
-                ]}
-                disabled={phase === DRIVER_PHASE.IDLE}
-                onPress={toggleOnline}
-              >
-                <View
+              {(phase === DRIVER_PHASE.IDLE ||
+                phase === DRIVER_PHASE.OFFLINE) && (
+                <Pressable
                   style={[
-                    styles.onlineKnob,
-                    online && styles.onlineKnobOn,
+                    styles.onlineToggle,
+                    online && styles.onlineToggleOn,
+                    !canGoOnline && styles.onlineToggleDisabled,
                   ]}
-                />
-              </Pressable>}
+                  disabled={phase === DRIVER_PHASE.IDLE}
+                  onPress={toggleOnline}
+                >
+                  <View
+                    style={[styles.onlineKnob, online && styles.onlineKnobOn]}
+                  />
+                </Pressable>
+              )}
             </View>
 
             {/* напоминание заполнить технику */}
@@ -405,7 +418,7 @@ export default function DriverHomeScreen() {
               <Pressable
                 style={styles.fillVehicleBtn}
                 onPress={() => {
-                  console.log('navigate to DriverVehicle (заполнить технику)');
+                  console.log("navigate to DriverVehicle (заполнить технику)");
                   // navigation && navigation.navigate?.('DriverVehicle');
                 }}
               >
@@ -426,7 +439,9 @@ export default function DriverHomeScreen() {
               <Pressable
                 style={styles.fillVehicleBtn}
                 onPress={() => {
-                  console.log('navigate to DriverDocuments (заполнить документы)');
+                  console.log(
+                    "navigate to DriverDocuments (заполнить документы)"
+                  );
                   // navigation && navigation.navigate?.('DriverDocuments');
                 }}
               >
@@ -523,7 +538,7 @@ export default function DriverHomeScreen() {
                     </Text>
                   </View>
                   {phase === DRIVER_PHASE.IN_PROGRESS && (
-                    <View style={{ alignItems: 'flex-end' }}>
+                    <View style={{ alignItems: "flex-end" }}>
                       <Text style={styles.tariffLabel}>Время работы</Text>
                       <Text style={styles.timerText}>
                         {formatWorkedTime(workedSeconds)}
@@ -534,7 +549,7 @@ export default function DriverHomeScreen() {
                     </View>
                   )}
                   {phase === DRIVER_PHASE.COMPLETED && (
-                    <View style={{ alignItems: 'flex-end' }}>
+                    <View style={{ alignItems: "flex-end" }}>
                       <Text style={styles.tariffLabel}>Заработано</Text>
                       <Text style={styles.tariffValue}>
                         {currentOrder.totalPrice} ₸
@@ -543,22 +558,30 @@ export default function DriverHomeScreen() {
                   )}
                 </View>
 
+                <View style={styles.rowButtons}>
+                  <Button
+                    title="Чат с клиентом"
+                    variant="ghost"
+                    onPress={() => {
+                      if (!currentOrder?.id) return;
+                      nav.navigate("Chat", {
+                        orderId: currentOrder.id,
+                        peerName: currentOrder.customerName || "Клиент",
+                      });
+                    }}
+                  />
+                </View>
+
                 <View style={{ marginTop: 12 }}>
                   {phase === DRIVER_PHASE.ACCEPTED && (
                     <View style={styles.rowButtons}>
-                      <Button
-                        title="Я на месте"
-                        onPress={handleArrived}
-                      />
+                      <Button title="Я на месте" onPress={handleArrived} />
                     </View>
                   )}
 
                   {phase === DRIVER_PHASE.ARRIVED && (
                     <View style={styles.rowButtons}>
-                      <Button
-                        title="Начать работу"
-                        onPress={handleStartWork}
-                      />
+                      <Button title="Начать работу" onPress={handleStartWork} />
                     </View>
                   )}
 
@@ -601,40 +624,40 @@ export default function DriverHomeScreen() {
 
 const styles = StyleSheet.create({
   topArea: {
-    position: 'absolute',
+    position: "absolute",
     top: 20,
     left: 16,
     right: 16,
   },
-  brand: { fontSize: 20, fontWeight: '900', color: '#111827' },
+  brand: { fontSize: 20, fontWeight: "900", color: "#111827" },
 
-  permTitle: { fontWeight: '800', fontSize: 14 },
-  permText: { marginTop: 4, color: '#6A6A6A', fontSize: 12 },
+  permTitle: { fontWeight: "800", fontSize: 14 },
+  permText: { marginTop: 4, color: "#6A6A6A", fontSize: 12 },
 
   panelWrap: {
-    position: 'absolute',
+    position: "absolute",
     left: 16,
     right: 16,
     bottom: 20,
   },
   panelCardDark: {
-    backgroundColor: '#111827',
+    backgroundColor: "#111827",
     paddingVertical: 14,
     paddingHorizontal: 14,
   },
 
   statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   statusLabel: {
-    color: '#F9FAFB',
+    color: "#F9FAFB",
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   statusSub: {
-    color: '#9CA3AF',
+    color: "#9CA3AF",
     fontSize: 11,
     marginTop: 2,
   },
@@ -643,12 +666,12 @@ const styles = StyleSheet.create({
     width: 44,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#374151',
+    backgroundColor: "#374151",
     padding: 3,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   onlineToggleOn: {
-    backgroundColor: '#22C55E',
+    backgroundColor: "#22C55E",
   },
   onlineToggleDisabled: {
     opacity: 0.4,
@@ -657,36 +680,36 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: '#F9FAFB',
-    alignSelf: 'flex-start',
+    backgroundColor: "#F9FAFB",
+    alignSelf: "flex-start",
   },
   onlineKnobOn: {
-    alignSelf: 'flex-end',
+    alignSelf: "flex-end",
   },
 
   fillVehicleBtn: {
     marginTop: 10,
     padding: 8,
     borderRadius: 10,
-    backgroundColor: '#1F2937',
-    flexDirection: 'row',
-    alignItems: 'center',
+    backgroundColor: "#1F2937",
+    flexDirection: "row",
+    alignItems: "center",
   },
   fillVehicleText: {
-    color: '#FACC15',
+    color: "#FACC15",
     fontSize: 12,
     flex: 1,
-    flexWrap: 'wrap',
+    flexWrap: "wrap",
   },
 
   sectionTitle: {
-    color: '#F9FAFB',
+    color: "#F9FAFB",
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: "700",
     marginTop: 6,
   },
   sectionSub: {
-    color: '#9CA3AF',
+    color: "#9CA3AF",
     fontSize: 11,
     marginTop: 4,
   },
@@ -694,46 +717,46 @@ const styles = StyleSheet.create({
   orderCard: {
     marginTop: 8,
     borderRadius: 12,
-    backgroundColor: '#1F2937',
+    backgroundColor: "#1F2937",
     padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   orderTitle: {
-    color: '#F9FAFB',
+    color: "#F9FAFB",
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   orderSub: {
-    color: '#9CA3AF',
+    color: "#9CA3AF",
     fontSize: 11,
     marginTop: 2,
   },
 
   infoText: {
-    color: '#E5E7EB',
+    color: "#E5E7EB",
     fontSize: 11,
     marginTop: 6,
   },
 
   tariffRow: {
     marginTop: 10,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
   },
   tariffLabel: {
-    color: '#9CA3AF',
+    color: "#9CA3AF",
     fontSize: 11,
   },
   tariffValue: {
-    color: '#F9FAFB',
+    color: "#F9FAFB",
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   timerText: {
-    color: '#FACC15',
+    color: "#FACC15",
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
   },
 
   rowButtons: {
@@ -741,12 +764,12 @@ const styles = StyleSheet.create({
   },
 
   loading: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

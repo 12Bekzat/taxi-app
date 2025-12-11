@@ -1,5 +1,5 @@
 // screens/CustomerHomeScreeen.js
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -9,40 +9,56 @@ import {
   Modal,
   TextInput,
   Alert,
-} from 'react-native';
-import * as Location from 'expo-location';
-import { Ionicons } from '@expo/vector-icons';
+  Platform,
+  Linking,
+} from "react-native";
+import * as Location from "expo-location";
+import { Ionicons } from "@expo/vector-icons";
 
-import OSMMap from '../components/OSMMap';
-import FloatingCard from '../components/FloatingCard';
-import Button from '../components/Button';
-import AddressAutocomplete from '../components/AddressAutocomplete';
-import { reverseGeocode, routeDriving } from '../utils/routing';
-import { clusterPoints } from '../utils/cluster';
+import OSMMap from "../components/OSMMap";
+import FloatingCard from "../components/FloatingCard";
+import Button from "../components/Button";
+import AddressAutocomplete from "../components/AddressAutocomplete";
+import { reverseGeocode, routeDriving } from "../utils/routing";
+import { clusterPoints } from "../utils/cluster";
 
 // 🔗 методы работы с заказами (через fetch)
 import {
   createOrder,
   fetchMyActiveOrders,
   fetchLastCompletedUnratedOrder,
-} from '../api/orders';
-import { rateOrder } from '../api/rating';
+} from "../api/orders";
+import { rateOrder } from "../api/rating";
+import { fetchEquipmentPricePerMinute } from "../api/pricing";
+import { useNavigation } from "@react-navigation/native";
 
 const ALMATY = { latitude: 43.238949, longitude: 76.889709 };
 
 // Локальные типы техники (для UI).
 const VEHICLES = [
-  { id: 'tow_truck', title: 'Эвакуатор', price: 8000, backendId: 1 },
-  { id: 'crane', title: 'Манипулятор', price: 9500, backendId: 2 },
-  { id: 'heavy', title: 'Грузовой', price: 12000, backendId: 3 },
+  {
+    id: "tow_truck",
+    title: "Эвакуатор",
+    price: 8000,
+    backendId: 1,
+    code: "EVAC",
+  },
+  {
+    id: "crane",
+    title: "Манипулятор",
+    price: 9500,
+    backendId: 2,
+    code: "MANIP",
+  },
+  { id: "heavy", title: "Грузовой", price: 12000, backendId: 3, code: "TRUCK" },
 ];
 
 const ORDER_STATE = {
-  IDLE: 'idle',
-  SEARCHING: 'searching',
-  ASSIGNED: 'assigned',
-  IN_PROGRESS: 'in_progress',
-  COMPLETED: 'completed',
+  IDLE: "idle",
+  SEARCHING: "searching",
+  ASSIGNED: "assigned",
+  IN_PROGRESS: "in_progress",
+  COMPLETED: "completed",
 };
 
 const SEARCH_DURATION_SEC = 3 * 60; // 3 минуты как на скрине
@@ -56,13 +72,15 @@ export default function CustomerHomeScreeen() {
   });
 
   const [myLocation, setMyLocation] = useState(null);
-  const [addressText, setAddressText] = useState('');
+  const [addressText, setAddressText] = useState("");
   const [addressCoord, setAddressCoord] = useState(null);
 
-  const [activeVehicle, setActiveVehicle] = useState('tow_truck');
+  const [activeVehicle, setActiveVehicle] = useState("tow_truck");
   const [driverClusters, setDriverClusters] = useState([]);
   const [route, setRoute] = useState(null);
   const [price, setPrice] = useState(0);
+
+  const [prices, setPrices] = useState({}); // equipmentId -> pricePerMinute
 
   const [loading, setLoading] = useState(false);
   const [permError, setPermError] = useState(false);
@@ -78,34 +96,34 @@ export default function CustomerHomeScreeen() {
   const [ratingVisible, setRatingVisible] = useState(false);
   const [ratingOrder, setRatingOrder] = useState(null);
   const [ratingValue, setRatingValue] = useState(5);
-  const [ratingComment, setRatingComment] = useState('');
+  const [ratingComment, setRatingComment] = useState("");
 
   // статичный «назначенный» водитель (fallback)
   const assignedDriverFallback = {
-    name: 'Айдар',
-    vehicleTitle: 'Эвакуатор MAN',
-    plate: '123 ABC 02',
-    color: 'Серый',
-    phone: '+7 701 123 45 67',
+    name: "Айдар",
+    vehicleTitle: "Эвакуатор MAN",
+    plate: "123 ABC 02",
+    color: "Серый",
+    phone: "+7 701 123 45 67",
     etaMin: 7,
   };
 
   const vehicleObj = useMemo(
     () => VEHICLES.find((v) => v.id === activeVehicle) || VEHICLES[0],
-    [activeVehicle],
+    [activeVehicle]
   );
 
   // ===== helpers =====
 
   const mapStatusToOrderState = (status) => {
     switch (status) {
-      case 'NEW':
+      case "NEW":
         return ORDER_STATE.SEARCHING;
-      case 'ACCEPTED':
+      case "ACCEPTED":
         return ORDER_STATE.ASSIGNED;
-      case 'IN_PROGRESS':
+      case "IN_PROGRESS":
         return ORDER_STATE.IN_PROGRESS;
-      case 'COMPLETED':
+      case "COMPLETED":
         return ORDER_STATE.COMPLETED;
       default:
         return ORDER_STATE.IDLE;
@@ -118,10 +136,8 @@ export default function CustomerHomeScreeen() {
       setPrice(order.totalPrice);
       return;
     }
-    const perMin =
-      order.pricePerMinute ||
-      Math.round((vehicleObj.price || 0) / 30); // грубый fallback
-    const minutes = order.estimatedMinutes || 30;
+    const perMin = order.pricePerMinute || Math.round(vehicleObj.price || 0); // грубый fallback
+    const minutes = order.estimatedMinutes || 1;
     setPrice(perMin * minutes);
   };
 
@@ -136,17 +152,81 @@ export default function CustomerHomeScreeen() {
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
+      if (status !== "granted") {
         setPermError(true);
         return;
       }
       setPermError(false);
       const loc = await Location.getCurrentPositionAsync({});
-      const c = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      const c = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      };
       setMyLocation(c);
-      setRegion((r) => ({ ...r, latitude: c.latitude, longitude: c.longitude }));
+      setRegion((r) => ({
+        ...r,
+        latitude: c.latitude,
+        longitude: c.longitude,
+      }));
     })();
+
+    getPrices();
   }, []);
+
+  const getPrices = async () => {
+    console.log("dasdadads");
+    try {
+      const evac = await fetchEquipmentPricePerMinute({
+        equipmentCode: "EVAC",
+        regionId: 1,
+        lat: 43.24,
+        lon: 76.88,
+      });
+
+      const manip = await fetchEquipmentPricePerMinute({
+        equipmentCode: "MANIP",
+        regionId: 1,
+        lat: 43.24,
+        lon: 76.88,
+      });
+
+      const truck = await fetchEquipmentPricePerMinute({
+        equipmentCode: "TRUCK",
+        regionId: 1,
+        lat: 43.24,
+        lon: 76.88,
+      });
+
+      VEHICLES.forEach((v) => {
+        if (v.code === "EVAC") {
+          v.price =
+            evac?.finalPricePerMinute || evac?.basePricePerMinute || 266;
+        }
+        if (v.code === "MANIP") {
+          v.price =
+            manip?.finalPricePerMinute || manip?.basePricePerMinute || 366;
+        }
+        if (v.code === "TRUCK") {
+          v.price =
+            truck?.finalPricePerMinute || truck?.basePricePerMinute || 331;
+        }
+      });
+
+      setPrices(() => ({
+        EVAC: evac?.finalPriceRounded || evac?.basePriceRounded || 266,
+        MANIP: manip?.finalPriceRounded || manip?.basePriceRounded || 366,
+        TRUCK: truck?.finalPriceRounded || truck?.basePriceRounded || 331,
+      }));
+
+      console.log("prices", {
+        EVAC: evac.finalPricePerMinute,
+        MANIP: manip.finalPricePerMinute,
+        TRUCK: truck.finalPricePerMinute,
+      });
+    } catch (error) {
+      console.log(error);
+    }
+  };
 
   // моковые машины вокруг
   useEffect(() => {
@@ -172,7 +252,7 @@ export default function CustomerHomeScreeen() {
           if (o.originLat && o.originLon) {
             const coord = { latitude: o.originLat, longitude: o.originLon };
             setAddressCoord(coord);
-            setAddressText(o.originAddress || '');
+            setAddressText(o.originAddress || "");
             updateRoute(coord, /*silent*/ true);
           }
         } else {
@@ -184,11 +264,11 @@ export default function CustomerHomeScreeen() {
         if (lastUnrated && lastUnrated.id) {
           setRatingOrder(lastUnrated);
           setRatingValue(0);
-          setRatingComment('');
+          setRatingComment("");
           setRatingVisible(true);
         }
       } catch (e) {
-        console.log('init customer home error', e);
+        console.log("init customer home error", e);
       }
     })();
   }, []);
@@ -211,7 +291,7 @@ export default function CustomerHomeScreeen() {
         setOrderState(mapStatusToOrderState(o.status));
         recalcPriceFromOrder(o);
       } catch (e) {
-        console.log('poll active order error', e);
+        console.log("poll active order error", e);
       }
     }, 5000);
 
@@ -227,7 +307,7 @@ export default function CustomerHomeScreeen() {
       setSearchRemaining((prev) => {
         if (prev <= 1) {
           clearInterval(id);
-          if (!currentOrder || currentOrder.status === 'NEW') {
+          if (!currentOrder || currentOrder.status === "NEW") {
             setOrderState(ORDER_STATE.ASSIGNED);
           }
           return 0;
@@ -253,7 +333,7 @@ export default function CustomerHomeScreeen() {
       setRoute(r);
       setPrice(estimatePrice(r));
     } catch (e) {
-      console.log('routeDriving error', e);
+      console.log("routeDriving error", e);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -270,14 +350,17 @@ export default function CustomerHomeScreeen() {
   const handleLongPress = async (c) => {
     setAddressCoord(c);
     const addr = await reverseGeocode(c.latitude, c.longitude);
-    setAddressText(addr || '');
+    setAddressText(addr || "");
     updateRoute(c);
   };
 
   const useMyLocation = async () => {
     if (!myLocation) return;
-    const addr = await reverseGeocode(myLocation.latitude, myLocation.longitude);
-    setAddressText(addr || 'Моё местоположение');
+    const addr = await reverseGeocode(
+      myLocation.latitude,
+      myLocation.longitude
+    );
+    setAddressText(addr || "Моё местоположение");
     setAddressCoord(myLocation);
     updateRoute(myLocation);
     setPanelExpanded(false);
@@ -291,7 +374,8 @@ export default function CustomerHomeScreeen() {
     try {
       setLoading(true);
 
-      const vehicle = VEHICLES.find((v) => v.id === activeVehicle) || VEHICLES[0];
+      const vehicle =
+        VEHICLES.find((v) => v.id === activeVehicle) || VEHICLES[0];
       const equipmentTypeId = vehicle.backendId;
 
       if (!route) {
@@ -306,7 +390,7 @@ export default function CustomerHomeScreeen() {
         destinationAddress: null,
         destinationLat: null,
         destinationLon: null,
-        estimatedMinutes: 30,
+        estimatedMinutes: 1,
       };
 
       const order = await createOrder(payload);
@@ -315,14 +399,14 @@ export default function CustomerHomeScreeen() {
       recalcPriceFromOrder(order);
       setPanelExpanded(false);
     } catch (e) {
-      console.log('createOrder error', e);
+      console.log("createOrder error", e);
     } finally {
       setLoading(false);
     }
   };
 
   const cancelOrder = () => {
-    console.log('TODO: отправить cancel на бэк');
+    console.log("TODO: отправить cancel на бэк");
     setOrderState(ORDER_STATE.IDLE);
     setSearchRemaining(SEARCH_DURATION_SEC);
     setCurrentOrder(null);
@@ -333,24 +417,26 @@ export default function CustomerHomeScreeen() {
     if (!currentOrder) return;
 
     console.log(
-      `FAKE PAYMENT: order=${currentOrder.id}, amount=${currentOrder.totalPrice || price} ₸`,
+      `FAKE PAYMENT: order=${currentOrder.id}, amount=${
+        currentOrder.totalPrice || price
+      } ₸`
     );
 
     // вместо того чтобы сразу чистить заказ — сначала даём ОЦЕНИТЬ
     setRatingOrder(currentOrder);
     setRatingValue(5);
-    setRatingComment('');
+    setRatingComment("");
     setRatingVisible(true);
   };
 
   useEffect(() => {
-  console.log('order', currentOrder);
+    console.log("order", currentOrder);
   });
 
   // отправка оценки на бэк
   const handleSubmitRating = async () => {
     if (!ratingOrder || !ratingValue) {
-      Alert.alert('Оценка', 'Поставьте оценку от 1 до 5 звёзд.');
+      Alert.alert("Оценка", "Поставьте оценку от 1 до 5 звёзд.");
       return;
     }
 
@@ -359,13 +445,13 @@ export default function CustomerHomeScreeen() {
       await rateOrder(
         ratingOrder.id,
         ratingValue,
-        ratingComment.trim() || null,
+        ratingComment.trim() || null
       );
 
       // после успешной оценки очищаем локальное состояние заказа
       setRatingVisible(false);
       setRatingOrder(null);
-      setRatingComment('');
+      setRatingComment("");
       setRatingValue(5);
 
       // сброс состояния заказа
@@ -373,15 +459,15 @@ export default function CustomerHomeScreeen() {
       setOrderState(ORDER_STATE.IDLE);
       setSearchRemaining(SEARCH_DURATION_SEC);
     } catch (e) {
-      console.log('submitDriverRating error', e);
-      Alert.alert('Ошибка', 'Не удалось отправить оценку. Попробуйте ещё раз.');
+      console.log("submitDriverRating error", e);
+      Alert.alert("Ошибка", "Не удалось отправить оценку. Попробуйте ещё раз.");
     } finally {
       setLoading(false);
     }
   };
 
   const compactAddress =
-    addressText?.length > 35 ? addressText.slice(0, 32) + '…' : addressText;
+    addressText?.length > 35 ? addressText.slice(0, 32) + "…" : addressText;
 
   const panelPositionStyle =
     panelExpanded && orderState === ORDER_STATE.IDLE
@@ -394,12 +480,37 @@ export default function CustomerHomeScreeen() {
   const formatTime = (sec) => {
     const m = Math.floor(sec / 60)
       .toString()
-      .padStart(2, '0');
-    const s = (sec % 60).toString().padStart(2, '0');
+      .padStart(2, "0");
+    const s = (sec % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
   };
 
   const searchProgress = 1 - searchRemaining / SEARCH_DURATION_SEC;
+
+  const handleCall = async (phone) => {
+    // На iOS часто используют telprompt, чтобы сразу показывать диалог звонка
+    try {
+      const url = Platform.OS === "ios" ? `telprompt:${phone}` : `tel:${phone}`;
+      console.log("url", url);
+
+      console.log("url", url);
+      const supported = await Linking.canOpenURL(url);
+
+      console.log("supported", supported);
+
+      if (!supported) {
+        Alert.alert("Ошибка", "Не удалось открыть звонок на этом устройстве");
+        return;
+      }
+
+      await Linking.openURL(url);
+    } catch (e) {
+      console.error("Error opening dialer", e);
+      Alert.alert("Ошибка", "Произошла ошибка при попытке открыть звонилку");
+    }
+  };
+
+  const navigation = useNavigation();
 
   const driverName =
     currentOrder?.driverName ||
@@ -416,15 +527,20 @@ export default function CustomerHomeScreeen() {
 
   const ratingDriverName = ratingOrder?.driverName || driverName;
   const ratingEquipmentName =
-    ratingOrder?.equipmentName || driverVehicle || 'Спецтехника';
+    ratingOrder?.equipmentName || driverVehicle || "Спецтехника";
 
   return (
     <View style={{ flex: 1 }}>
       <OSMMap
         initialRegion={region}
-        fromMarker={currentOrder?.destinationLat && currentOrder?.destinationLon
-            ? { latitude: currentOrder.destinationLat, longitude: currentOrder.destinationLon }
-            : null}
+        fromMarker={
+          currentOrder?.destinationLat && currentOrder?.destinationLon
+            ? {
+                latitude: currentOrder.destinationLat,
+                longitude: currentOrder.destinationLon,
+              }
+            : null
+        }
         toMarker={addressCoord}
         routePoints={route?.points}
         onLongPress={handleLongPress}
@@ -433,7 +549,7 @@ export default function CustomerHomeScreeen() {
         {/* верх: бренд */}
         <View style={styles.topArea}>
           <Text style={styles.brand}>
-            <Text style={{ color: '#E30613' }}>LIFT</Text>Me
+            <Text style={{ color: "#E30613" }}>LIFT</Text>Me
           </Text>
           {permError && (
             <FloatingCard style={{ marginTop: 8 }}>
@@ -469,8 +585,8 @@ export default function CustomerHomeScreeen() {
 
                     <View
                       style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
+                        flexDirection: "row",
+                        alignItems: "center",
                         marginTop: 8,
                       }}
                     >
@@ -518,7 +634,7 @@ export default function CustomerHomeScreeen() {
                       title={
                         price
                           ? `Заказать — ~${price} ₸`
-                          : 'Заказать (после выбора адреса)'
+                          : "Заказать (после выбора адреса)"
                       }
                       onPress={handleOrder}
                       disabled={!addressCoord}
@@ -546,14 +662,10 @@ export default function CustomerHomeScreeen() {
                           numberOfLines={1}
                           ellipsizeMode="tail"
                         >
-                          {compactAddress || 'Укажите адрес'}
+                          {compactAddress || "Укажите адрес"}
                         </Text>
                       </View>
-                      <Ionicons
-                        name="chevron-up"
-                        size={18}
-                        color="#9CA3AF"
-                      />
+                      <Ionicons name="chevron-up" size={18} color="#9CA3AF" />
                     </Pressable>
 
                     <View style={{ marginTop: 12 }}>
@@ -578,7 +690,7 @@ export default function CustomerHomeScreeen() {
                       title={
                         price
                           ? `Заказать — ~${price} ₸`
-                          : 'Заказать (после выбора адреса)'
+                          : "Заказать (после выбора адреса)"
                       }
                       onPress={handleOrder}
                       disabled={!addressCoord}
@@ -616,14 +728,10 @@ export default function CustomerHomeScreeen() {
                   <Pressable
                     style={styles.circleBtn}
                     onPress={() => {
-                      console.log('Детали заказа (демо)');
+                      console.log("Детали заказа (демо)");
                     }}
                   >
-                    <Ionicons
-                      name="reorder-three"
-                      size={26}
-                      color="#111827"
-                    />
+                    <Ionicons name="reorder-three" size={26} color="#111827" />
                   </Pressable>
                 </View>
 
@@ -643,7 +751,7 @@ export default function CustomerHomeScreeen() {
                   </Text>
                 </View>
                 <Text style={styles.caption}>
-                  Водитель уже в пути. Прибудет примерно через{' '}
+                  Водитель уже в пути. Прибудет примерно через{" "}
                   {assignedDriverFallback.etaMin} минут.
                 </Text>
 
@@ -653,14 +761,14 @@ export default function CustomerHomeScreeen() {
                   plate={assignedDriverFallback.plate}
                   color={assignedDriverFallback.color}
                   price={price}
-                  address={compactAddress || 'Адрес не задан'}
+                  address={compactAddress || "Адрес не задан"}
                 />
 
                 <View style={styles.rowButtons}>
                   <Button
                     title="Позвонить водителю"
                     onPress={() => {
-                      console.log('call', driverPhone);
+                      handleCall(driverPhone);
                     }}
                   />
                   <View style={{ width: 8 }} />
@@ -668,7 +776,11 @@ export default function CustomerHomeScreeen() {
                     title="Чат с водителем"
                     variant="ghost"
                     onPress={() => {
-                      console.log('open chat (demo)');
+                      if (!currentOrder?.id) return;
+                      navigation.navigate("Chat", {
+                        orderId: currentOrder.id,
+                        peerName: driverName,
+                      });
                     }}
                   />
                 </View>
@@ -699,14 +811,14 @@ export default function CustomerHomeScreeen() {
                   plate={assignedDriverFallback.plate}
                   color={assignedDriverFallback.color}
                   price={price}
-                  address={compactAddress || 'Адрес не задан'}
+                  address={compactAddress || "Адрес не задан"}
                 />
 
                 <View style={styles.rowButtons}>
                   <Button
                     title="Позвонить водителю"
                     onPress={() => {
-                      console.log('call', driverPhone);
+                      handleCall(driverPhone);
                     }}
                   />
                   <View style={{ width: 8 }} />
@@ -714,7 +826,7 @@ export default function CustomerHomeScreeen() {
                     title="Чат с водителем"
                     variant="ghost"
                     onPress={() => {
-                      console.log('open chat (demo)');
+                      console.log("open chat (demo)");
                     }}
                   />
                 </View>
@@ -737,7 +849,7 @@ export default function CustomerHomeScreeen() {
                   plate={assignedDriverFallback.plate}
                   color={assignedDriverFallback.color}
                   price={currentOrder?.totalPrice || price}
-                  address={compactAddress || 'Адрес не задан'}
+                  address={compactAddress || "Адрес не задан"}
                 />
 
                 <View style={{ marginTop: 16 }}>
@@ -773,11 +885,9 @@ export default function CustomerHomeScreeen() {
             <Text style={styles.ratingSubtitle}>
               {ratingDriverName
                 ? `Водитель: ${ratingDriverName}`
-                : 'Ваш водитель'}
+                : "Ваш водитель"}
             </Text>
-            <Text style={styles.ratingSubtitle}>
-              {ratingEquipmentName}
-            </Text>
+            <Text style={styles.ratingSubtitle}>{ratingEquipmentName}</Text>
 
             <View style={styles.starsRow}>
               {[1, 2, 3, 4, 5].map((star) => (
@@ -787,7 +897,7 @@ export default function CustomerHomeScreeen() {
                   style={styles.starBtn}
                 >
                   <Ionicons
-                    name={star <= ratingValue ? 'star' : 'star-outline'}
+                    name={star <= ratingValue ? "star" : "star-outline"}
                     size={28}
                     color="#FACC15"
                   />
@@ -816,7 +926,7 @@ function DriverInfo({ name, vehicleTitle, plate, color, price, address }) {
   return (
     <View style={styles.driverCard}>
       <View style={styles.driverAvatar}>
-        <Text style={styles.driverAvatarText}>{name ? name[0] : '?'}</Text>
+        <Text style={styles.driverAvatarText}>{name ? name[0] : "?"}</Text>
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.driverName}>
@@ -839,7 +949,7 @@ function VehicleCard({ data, active, onPress }) {
       onPress={onPress}
       style={[
         styles.vehicleCard,
-        active && { borderColor: '#E30613', backgroundColor: '#FFF7F7' },
+        active && { borderColor: "#E30613", backgroundColor: "#FFF7F7" },
       ]}
     >
       <View style={styles.vehicleIconStub}>
@@ -848,25 +958,25 @@ function VehicleCard({ data, active, onPress }) {
       <Text style={styles.vehicleTitle} numberOfLines={1}>
         {data.title}
       </Text>
-      <Text style={styles.vehiclePrice}>от {data.price} ₸ / 30 мин</Text>
+      <Text style={styles.vehiclePrice}>от {data.price} ₸ / 1 мин</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   topArea: {
-    position: 'absolute',
+    position: "absolute",
     top: 20,
     left: 16,
     right: 16,
   },
-  brand: { fontSize: 22, fontWeight: '900', color: '#0F0F10' },
+  brand: { fontSize: 22, fontWeight: "900", color: "#0F0F10" },
 
-  permTitle: { fontWeight: '800', fontSize: 14 },
-  permText: { marginTop: 4, color: '#6A6A6A', fontSize: 12 },
+  permTitle: { fontWeight: "800", fontSize: 14 },
+  permText: { marginTop: 4, color: "#6A6A6A", fontSize: 12 },
 
   panelWrap: {
-    position: 'absolute',
+    position: "absolute",
     left: 16,
     right: 16,
   },
@@ -875,77 +985,82 @@ const styles = StyleSheet.create({
   },
 
   handleRow: {
-    alignItems: 'center',
+    alignItems: "center",
     marginBottom: 4,
   },
   handleBar: {
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#D1D5DB',
+    backgroundColor: "#D1D5DB",
   },
 
   expandedHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     marginTop: 4,
   },
   closeBtn: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F3F4F6',
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F3F4F6",
   },
 
-  h1: { fontSize: 16, fontWeight: '800' },
-  helper: { fontSize: 11, color: '#9CA3AF', marginTop: 6 },
+  h1: { fontSize: 16, fontWeight: "800" },
+  helper: { fontSize: 11, color: "#9CA3AF", marginTop: 6 },
 
   myLocationBtn: {
     marginLeft: 8,
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   compactAddressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 6,
   },
   addressIcon: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
     marginRight: 8,
   },
-  addressLabel: { fontSize: 11, color: '#9CA3AF' },
+  addressLabel: { fontSize: 11, color: "#9CA3AF" },
   addressValue: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
+    fontWeight: "600",
+    color: "#111827",
     marginTop: 2,
   },
 
-  subTitle: { fontSize: 12, fontWeight: '700', color: '#111827', marginBottom: 6 },
+  subTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111827",
+    marginBottom: 6,
+  },
 
   vehiclesRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     gap: 8,
   },
   vehicleCard: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
     borderRadius: 12,
     padding: 8,
   },
@@ -953,104 +1068,104 @@ const styles = StyleSheet.create({
     width: 32,
     height: 24,
     borderRadius: 6,
-    backgroundColor: '#F3F4F6',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 4,
   },
-  vehicleTitle: { fontSize: 12, fontWeight: '700', color: '#111827' },
-  vehiclePrice: { fontSize: 11, color: '#4B5563', marginTop: 2 },
+  vehicleTitle: { fontSize: 12, fontWeight: "700", color: "#111827" },
+  vehiclePrice: { fontSize: 11, color: "#4B5563", marginTop: 2 },
 
   loading: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   searchHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginTop: 4,
   },
-  timerText: { fontWeight: '700', fontSize: 14 },
+  timerText: { fontWeight: "700", fontSize: 14 },
 
-  caption: { color: '#6A6A6A', marginTop: 4 },
+  caption: { color: "#6A6A6A", marginTop: 4 },
 
   progressBarBg: {
     marginTop: 10,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#F3F4F6',
-    overflow: 'hidden',
+    backgroundColor: "#F3F4F6",
+    overflow: "hidden",
   },
   progressBarFill: {
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#FBBF24',
+    backgroundColor: "#FBBF24",
   },
 
   actionsRow: {
     marginTop: 24,
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
+    flexDirection: "row",
+    justifyContent: "space-evenly",
   },
   circleBtn: {
     width: 64,
     height: 64,
     borderRadius: 32,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
+    borderColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
   },
   actionsLabelsRow: {
     marginTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
+    flexDirection: "row",
+    justifyContent: "space-evenly",
   },
-  actionsLabel: { fontSize: 12, color: '#9CA3AF' },
+  actionsLabel: { fontSize: 12, color: "#9CA3AF" },
 
   driverCard: {
     marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     padding: 10,
     borderRadius: 12,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: "#F3F4F6",
   },
   driverAvatar: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#E5E7EB',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center",
     marginRight: 10,
   },
-  driverAvatarText: { fontWeight: '800', fontSize: 18, color: '#111827' },
-  driverName: { fontWeight: '800', fontSize: 14 },
-  driverSub: { color: '#6B7280', fontSize: 12, marginTop: 2 },
+  driverAvatarText: { fontWeight: "800", fontSize: 18, color: "#111827" },
+  driverName: { fontWeight: "800", fontSize: 14 },
+  driverSub: { color: "#6B7280", fontSize: 12, marginTop: 2 },
 
   rowButtons: {
     marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
 
   // ===== РЕЙТИНГ =====
   ratingOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'flex-end',
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "flex-end",
   },
   ratingCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 16,
@@ -1058,16 +1173,16 @@ const styles = StyleSheet.create({
   },
   ratingTitle: {
     fontSize: 18,
-    fontWeight: '800',
-    color: '#111827',
+    fontWeight: "800",
+    color: "#111827",
   },
   ratingSubtitle: {
     fontSize: 13,
-    color: '#4B5563',
+    color: "#4B5563",
     marginTop: 4,
   },
   starsRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     marginTop: 12,
     marginBottom: 8,
   },
@@ -1077,13 +1192,13 @@ const styles = StyleSheet.create({
   ratingInput: {
     marginTop: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: "#E5E7EB",
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 8,
     minHeight: 70,
-    textAlignVertical: 'top',
+    textAlignVertical: "top",
     fontSize: 13,
-    color: '#111827',
+    color: "#111827",
   },
 });
